@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>시리얼 조회기</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -576,6 +575,7 @@ function buildSet(rows, colIdx) {
 // ---- 카메라 QR 스캔 ----
 let frameCount = 0;
 let dbgEl = null;
+let detector = null;
 
 function dbg(msg) {
   if (!dbgEl) dbgEl = document.getElementById('dbgStatus');
@@ -583,14 +583,41 @@ function dbg(msg) {
 }
 
 async function startCamera() {
-  try {
-    // jsQR 라이브러리 로드 확인
+  // 1) BarcodeDetector 지원 확인 (Chrome Android, Edge 등 기본 내장)
+  const hasBarcodeDetector = ('BarcodeDetector' in window);
+
+  if (!hasBarcodeDetector) {
+    // 2) BarcodeDetector 없으면 jsQR CDN 재시도
     if (typeof jsQR === 'undefined') {
-      alert('QR 라이브러리가 로드되지 않았습니다. 인터넷 연결을 확인해주세요.');
+      await new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+        s.onload = resolve;
+        s.onerror = resolve; // 실패해도 진행
+        document.head.appendChild(s);
+      });
+    }
+    if (typeof jsQR === 'undefined') {
+      alert(
+        'QR 인식 라이브러리를 불러올 수 없습니다.\n\n' +
+        '사용 환경을 확인해주세요:\n' +
+        '• Chrome / Edge 최신 버전 권장\n' +
+        '• 인터넷 연결 필요 (첫 실행 시)\n' +
+        '• GitHub Pages(HTTPS)에서 접속 시 자동 해결됩니다\n\n' +
+        '지금은 [직접 입력] 탭을 이용해주세요.'
+      );
       return;
     }
+  } else {
+    try {
+      detector = new BarcodeDetector({ formats: ['qr_code'] });
+    } catch(e) {
+      detector = null;
+    }
+  }
 
-    // 후면 카메라 우선, 실패 시 기본 카메라로 재시도
+  // 카메라 스트림 시작
+  try {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { exact: 'environment' } }
@@ -601,11 +628,9 @@ async function startCamera() {
 
     const video = document.getElementById('video');
     video.srcObject = stream;
-
-    await new Promise((resolve, reject) => {
+    await new Promise((resolve) => {
       video.onloadedmetadata = resolve;
-      video.onerror = reject;
-      setTimeout(resolve, 3000); // 3초 타임아웃
+      setTimeout(resolve, 3000);
     });
     await video.play();
 
@@ -615,61 +640,82 @@ async function startCamera() {
     document.getElementById('debugPanel').style.display = 'block';
     dbgEl = document.getElementById('dbgStatus');
 
-    const canvas = document.getElementById('qrCanvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    // 캔버스 크기는 한 번만 설정
     const W = video.videoWidth || 640;
     const H = video.videoHeight || 480;
-    canvas.width = W;
-    canvas.height = H;
-    dbg(`카메라 준비됨 · ${W}×${H} · QR을 화면에 맞춰주세요`);
+    const method = detector ? 'BarcodeDetector (내장)' : 'jsQR (라이브러리)';
+    dbg(`카메라 준비됨 · ${W}×${H} · 인식엔진: ${method}`);
 
     frameCount = 0;
 
-    function scanFrame() {
-      if (!stream) return;
-      scanInterval = requestAnimationFrame(scanFrame);
-      frameCount++;
-
-      // 3프레임마다 스캔 (성능 확보)
-      if (frameCount % 3 !== 0) return;
-      if (video.readyState < video.HAVE_ENOUGH_DATA) return;
-
-      try {
-        ctx.drawImage(video, 0, 0, W, H);
-        const imageData = ctx.getImageData(0, 0, W, H);
-
-        // attemptBoth: 밝은 배경/어두운 배경 QR 모두 시도
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
-          inversionAttempts: 'attemptBoth'
-        });
-
-        if (code && code.data) {
-          const now = Date.now();
-          dbg(`인식됨: ${code.data}`);
-          if (code.data !== lastCode || now - lastCodeTime > 3000) {
-            lastCode = code.data;
-            lastCodeTime = now;
-            checkCode(code.data.trim());
+    if (detector) {
+      // BarcodeDetector 방식 - video에 직접 적용, 훨씬 빠름
+      async function scanBD() {
+        if (!stream) return;
+        scanInterval = requestAnimationFrame(scanBD);
+        frameCount++;
+        if (frameCount % 5 !== 0) return;
+        try {
+          const codes = await detector.detect(video);
+          if (codes.length > 0) {
+            const val = codes[0].rawValue;
+            const now = Date.now();
+            dbg(`인식됨: ${val}`);
+            if (val !== lastCode || now - lastCodeTime > 3000) {
+              lastCode = val;
+              lastCodeTime = now;
+              checkCode(val.trim());
+            }
+          } else if (frameCount % 30 === 0) {
+            dbg(`스캔 중... · QR코드를 프레임 안에 맞춰주세요`);
           }
-        } else {
-          if (frameCount % 30 === 0) {
-            dbg(`스캔 중... (프레임 ${frameCount}) · QR을 천천히 가까이 대주세요`);
-          }
+        } catch(e) {
+          dbg('인식 오류: ' + e.message);
         }
-      } catch(e) {
-        dbg('스캔 오류: ' + e.message);
       }
+      scanBD();
+    } else {
+      // jsQR 방식
+      const canvas = document.getElementById('qrCanvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      canvas.width = W;
+      canvas.height = H;
+
+      function scanJsQR() {
+        if (!stream) return;
+        scanInterval = requestAnimationFrame(scanJsQR);
+        frameCount++;
+        if (frameCount % 3 !== 0) return;
+        if (video.readyState < video.HAVE_ENOUGH_DATA) return;
+        try {
+          ctx.drawImage(video, 0, 0, W, H);
+          const imageData = ctx.getImageData(0, 0, W, H);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'attemptBoth'
+          });
+          if (code && code.data) {
+            const now = Date.now();
+            dbg(`인식됨: ${code.data}`);
+            if (code.data !== lastCode || now - lastCodeTime > 3000) {
+              lastCode = code.data;
+              lastCodeTime = now;
+              checkCode(code.data.trim());
+            }
+          } else if (frameCount % 30 === 0) {
+            dbg(`스캔 중... (${frameCount}프레임) · QR을 천천히 가까이 대주세요`);
+          }
+        } catch(e) {
+          dbg('스캔 오류: ' + e.message);
+        }
+      }
+      scanJsQR();
     }
-    scanFrame();
 
   } catch(err) {
     let msg = '카메라를 시작할 수 없습니다.\n\n';
     if (err.name === 'NotAllowedError') msg += '카메라 권한이 거부되었습니다.\n브라우저 설정에서 카메라 권한을 허용해주세요.';
     else if (err.name === 'NotFoundError') msg += '카메라 장치를 찾을 수 없습니다.';
     else if (err.name === 'NotReadableError') msg += '카메라가 다른 앱에서 사용 중입니다.';
-    else if (location.protocol !== 'https:' && location.hostname !== 'localhost') msg += 'HTTPS 환경에서만 카메라를 사용할 수 있습니다.\nGitHub Pages에 올려서 사용해주세요.';
+    else if (location.protocol !== 'https:' && location.hostname !== 'localhost') msg += 'HTTPS 환경에서만 카메라를 사용할 수 있습니다.\nGitHub Pages에 올려서 접속해주세요.';
     else msg += err.message;
     alert(msg);
   }
