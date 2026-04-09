@@ -421,10 +421,11 @@
     <div class="card-label">1 — 엑셀 파일 업로드</div>
     <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      <div class="uz-title">파일을 클릭하거나 드래그</div>
+      <div class="uz-title">파일을 탭하여 선택</div>
       <div class="uz-sub">.xlsx &nbsp;·&nbsp; .xls &nbsp;·&nbsp; .csv</div>
     </div>
-    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+    <button onclick="document.getElementById('fileInput').click()" style="width:100%;margin-top:8px;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer;letter-spacing:-0.01em;">파일 선택</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/octet-stream,*/*">
     <div class="file-loaded" id="fileLoaded">
       <div class="fl-dot"></div>
       <span class="fl-name" id="flName"></span>
@@ -527,23 +528,52 @@ dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
 
 function loadFile(file) {
+  const name = file.name.toLowerCase();
+  const isCSV = name.endsWith('.csv') || file.type === 'text/csv' || file.type === 'text/plain';
+
   const reader = new FileReader();
+
+  reader.onerror = () => alert('파일을 읽을 수 없습니다. 다시 시도해주세요.');
+
   reader.onload = e => {
     try {
-      const wb = XLSX.read(e.target.result, { type: 'binary' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      if (!json.length) return alert('파일에 데이터가 없습니다.');
+      let json;
+
+      if (isCSV) {
+        // CSV는 텍스트로 직접 파싱
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        json = lines.map(line => {
+          // 쉼표 구분, 따옴표 내 쉼표 처리
+          const cols = [];
+          let cur = '', inQ = false;
+          for (const ch of line) {
+            if (ch === '"') { inQ = !inQ; }
+            else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
+            else cur += ch;
+          }
+          cols.push(cur.trim());
+          return cols;
+        });
+      } else {
+        // xlsx / xls
+        const wb = XLSX.read(e.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      }
+
+      if (!json || !json.length) return alert('파일에 데이터가 없습니다.');
 
       const headers = json[0].map(String);
       const rows = json.slice(1).filter(r => r.some(c => String(c).trim()));
+      if (!rows.length) return alert('헤더 외에 데이터가 없습니다.');
 
       const sel = document.getElementById('colSelect');
       sel.innerHTML = '';
       headers.forEach((h, i) => {
         const op = document.createElement('option');
         op.value = i;
-        op.textContent = h || `열 ${i+1}`;
+        op.textContent = (h || `열 ${i+1}`) + ` (예: ${String(rows[0][i] || '').slice(0,10)})`;
         sel.appendChild(op);
       });
 
@@ -551,17 +581,23 @@ function loadFile(file) {
       if (autoIdx >= 0) sel.value = autoIdx;
 
       document.getElementById('colRow').classList.add('show');
-
       sel.onchange = () => buildSet(rows, parseInt(sel.value));
       buildSet(rows, parseInt(sel.value));
 
       document.getElementById('flName').textContent = file.name;
       document.getElementById('flCount').textContent = rows.length + '행';
       document.getElementById('fileLoaded').classList.add('show');
-      dropzone.querySelector('.uz-title').textContent = '파일 교체: 클릭 또는 드래그';
-    } catch(err) { alert('파일 오류: ' + err.message); }
+      dropzone.querySelector('.uz-title').textContent = '파일 교체';
+    } catch(err) {
+      alert('파일 읽기 오류:\n' + err.message + '\n\n.xlsx 또는 .csv 파일인지 확인해주세요.');
+    }
   };
-  reader.readAsBinaryString(file);
+
+  if (isCSV) {
+    reader.readAsText(file, 'UTF-8');
+  } else {
+    reader.readAsBinaryString(file);
+  }
 }
 
 function buildSet(rows, colIdx) {
