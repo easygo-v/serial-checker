@@ -464,7 +464,10 @@
             </div>
           </div>
         </div>
-        <p class="cam-hint">QR코드를 사각형 안에 맞춰주세요</p>
+        <div id="debugPanel" style="margin-top:8px;padding:8px 12px;background:#1a1916;border-radius:6px;font-family:monospace;font-size:12px;color:#aaa;line-height:1.6;display:none">
+          <span id="dbgStatus">대기 중...</span>
+        </div>
+        <p class="cam-hint">QR코드를 프레임 안에 정면으로 맞춰주세요 · 빛이 충분해야 인식됩니다</p>
         <button id="stopCamBtn" onclick="stopCamera()">카메라 끄기</button>
       </div>
       <button id="startCamBtn" onclick="startCamera()">
@@ -571,46 +574,116 @@ function buildSet(rows, colIdx) {
 }
 
 // ---- 카메라 QR 스캔 ----
+let frameCount = 0;
+let dbgEl = null;
+
+function dbg(msg) {
+  if (!dbgEl) dbgEl = document.getElementById('dbgStatus');
+  if (dbgEl) dbgEl.textContent = msg;
+}
+
 async function startCamera() {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } });
+    // jsQR 라이브러리 로드 확인
+    if (typeof jsQR === 'undefined') {
+      alert('QR 라이브러리가 로드되지 않았습니다. 인터넷 연결을 확인해주세요.');
+      return;
+    }
+
+    // 후면 카메라 우선, 실패 시 기본 카메라로 재시도
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: 'environment' } }
+      });
+    } catch(e) {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    }
+
     const video = document.getElementById('video');
     video.srcObject = stream;
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = resolve;
+      video.onerror = reject;
+      setTimeout(resolve, 3000); // 3초 타임아웃
+    });
     await video.play();
 
     document.getElementById('cameraArea').style.display = 'block';
     document.getElementById('startCamBtn').style.display = 'none';
     document.getElementById('stopCamBtn').style.display = 'block';
+    document.getElementById('debugPanel').style.display = 'block';
+    dbgEl = document.getElementById('dbgStatus');
 
     const canvas = document.getElementById('qrCanvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    scanInterval = setInterval(() => {
-      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-      if (code) {
-        const now = Date.now();
-        if (code.data !== lastCode || now - lastCodeTime > 3000) {
-          lastCode = code.data;
-          lastCodeTime = now;
-          checkCode(code.data.trim());
+    // 캔버스 크기는 한 번만 설정
+    const W = video.videoWidth || 640;
+    const H = video.videoHeight || 480;
+    canvas.width = W;
+    canvas.height = H;
+    dbg(`카메라 준비됨 · ${W}×${H} · QR을 화면에 맞춰주세요`);
+
+    frameCount = 0;
+
+    function scanFrame() {
+      if (!stream) return;
+      scanInterval = requestAnimationFrame(scanFrame);
+      frameCount++;
+
+      // 3프레임마다 스캔 (성능 확보)
+      if (frameCount % 3 !== 0) return;
+      if (video.readyState < video.HAVE_ENOUGH_DATA) return;
+
+      try {
+        ctx.drawImage(video, 0, 0, W, H);
+        const imageData = ctx.getImageData(0, 0, W, H);
+
+        // attemptBoth: 밝은 배경/어두운 배경 QR 모두 시도
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'attemptBoth'
+        });
+
+        if (code && code.data) {
+          const now = Date.now();
+          dbg(`인식됨: ${code.data}`);
+          if (code.data !== lastCode || now - lastCodeTime > 3000) {
+            lastCode = code.data;
+            lastCodeTime = now;
+            checkCode(code.data.trim());
+          }
+        } else {
+          if (frameCount % 30 === 0) {
+            dbg(`스캔 중... (프레임 ${frameCount}) · QR을 천천히 가까이 대주세요`);
+          }
         }
+      } catch(e) {
+        dbg('스캔 오류: ' + e.message);
       }
-    }, 200);
+    }
+    scanFrame();
+
   } catch(err) {
-    alert('카메라 권한을 허용해주세요.\n' + err.message);
+    let msg = '카메라를 시작할 수 없습니다.\n\n';
+    if (err.name === 'NotAllowedError') msg += '카메라 권한이 거부되었습니다.\n브라우저 설정에서 카메라 권한을 허용해주세요.';
+    else if (err.name === 'NotFoundError') msg += '카메라 장치를 찾을 수 없습니다.';
+    else if (err.name === 'NotReadableError') msg += '카메라가 다른 앱에서 사용 중입니다.';
+    else if (location.protocol !== 'https:' && location.hostname !== 'localhost') msg += 'HTTPS 환경에서만 카메라를 사용할 수 있습니다.\nGitHub Pages에 올려서 사용해주세요.';
+    else msg += err.message;
+    alert(msg);
   }
 }
 
 function stopCamera() {
-  clearInterval(scanInterval);
+  cancelAnimationFrame(scanInterval);
+  scanInterval = null;
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
+  frameCount = 0;
+  lastCode = '';
   document.getElementById('cameraArea').style.display = 'none';
+  document.getElementById('debugPanel').style.display = 'none';
   document.getElementById('startCamBtn').style.display = 'flex';
   document.getElementById('stopCamBtn').style.display = 'none';
 }
