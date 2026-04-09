@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>시리얼 조회기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f3f0;
+    --surface: #ffffff;
+    --border: #e0ddd6;
+    --border-strong: #c8c4bc;
+    --text: #1a1916;
+    --text-muted: #7a7770;
+    --text-faint: #b0ada6;
+    --green-bg: #e8f5ee;
+    --green-text: #1a6636;
+    --green-border: #a8dbb8;
+    --red-bg: #fdecea;
+    --red-text: #8b1a1a;
+    --red-border: #f5b8b4;
+    --amber-bg: #fef8e7;
+    --amber-text: #7a5a00;
+    --accent: #2a2a2a;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  body {
+    font-family: -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo svg { width: 18px; height: 18px; stroke: #fff; fill: none; stroke-width: 1.8; }
+
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  header p {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+
+  .status-pill {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--red-bg);
+    color: var(--red-text);
+    border: 1px solid var(--red-border);
+    white-space: nowrap;
+  }
+  .status-pill.ready {
+    background: var(--green-bg);
+    color: var(--green-text);
+    border-color: var(--green-border);
+  }
+
+  main { padding: 16px; max-width: 540px; margin: 0 auto; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .card-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 12px;
+  }
+
+  /* 업로드 */
+  .upload-zone {
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--bg);
+  }
+  .upload-zone:hover, .upload-zone.drag { background: #eceae5; border-color: var(--text-muted); }
+  .upload-zone svg { width: 28px; height: 28px; stroke: var(--text-faint); fill: none; stroke-width: 1.5; margin-bottom: 8px; }
+  .upload-zone .uz-title { font-size: 14px; font-weight: 500; color: var(--text); }
+  .upload-zone .uz-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+
+  input[type="file"] { display: none; }
+
+  .file-loaded {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--green-bg);
+    border: 1px solid var(--green-border);
+    border-radius: var(--radius-sm);
+    margin-top: 10px;
+  }
+  .file-loaded.show { display: flex; }
+  .fl-dot { width: 8px; height: 8px; border-radius: 50%; background: #3aaa68; flex-shrink: 0; }
+  .fl-name { font-size: 13px; font-weight: 500; color: var(--green-text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fl-count { font-size: 12px; color: var(--green-text); opacity: 0.8; white-space: nowrap; }
+
+  .col-row {
+    display: none;
+    margin-top: 12px;
+  }
+  .col-row.show { display: block; }
+  .col-row label { font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 6px; }
+  .col-row select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    background: var(--surface);
+    color: var(--text);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    cursor: pointer;
+  }
+
+  /* 카메라 스캔 */
+  .scan-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .tab-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+  .tab-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* 카메라 뷰 */
+  .camera-wrap {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    aspect-ratio: 4/3;
+  }
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .scan-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .scan-frame {
+    width: 55%;
+    aspect-ratio: 1;
+    position: relative;
+  }
+  .scan-frame::before, .scan-frame::after,
+  .scan-frame > span::before, .scan-frame > span::after {
+    content: '';
+    position: absolute;
+    width: 20px; height: 20px;
+    border-color: #fff;
+    border-style: solid;
+  }
+  .scan-frame::before { top: 0; left: 0; border-width: 2.5px 0 0 2.5px; }
+  .scan-frame::after { top: 0; right: 0; border-width: 2.5px 2.5px 0 0; }
+  .scan-frame > span::before { bottom: 0; left: 0; border-width: 0 0 2.5px 2.5px; }
+  .scan-frame > span::after { bottom: 0; right: 0; border-width: 0 2.5px 2.5px 0; }
+
+  .scan-line {
+    position: absolute;
+    left: 8%; right: 8%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    animation: scanline 2s ease-in-out infinite;
+    top: 50%;
+  }
+  @keyframes scanline {
+    0%, 100% { top: 15%; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    50% { top: 85%; }
+  }
+
+  .cam-hint {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  #startCamBtn {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: opacity 0.15s;
+  }
+  #startCamBtn:hover { opacity: 0.85; }
+  #startCamBtn svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 2; }
+
+  #stopCamBtn {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 8px;
+    display: none;
+  }
+
+  /* 수동 입력 */
+  .input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .input-row input {
+    flex: 1;
+    padding: 11px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row button {
+    padding: 11px 18px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .input-row button:hover { opacity: 0.85; }
+
+  /* 결과 */
+  .result-card {
+    display: none;
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 12px;
+    border: 1px solid transparent;
+    text-align: center;
+    animation: fadeIn 0.2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .result-card.show { display: block; }
+  .result-card.ok { background: var(--green-bg); border-color: var(--green-border); }
+  .result-card.ng { background: var(--red-bg); border-color: var(--red-border); }
+  .result-card.warn { background: var(--amber-bg); border-color: #f0d060; }
+
+  .result-icon { font-size: 36px; line-height: 1; margin-bottom: 10px; }
+  .result-status { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .result-card.ok .result-status { color: var(--green-text); }
+  .result-card.ng .result-status { color: var(--red-text); }
+  .result-card.warn .result-status { color: var(--amber-text); }
+  .result-code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 14px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    display: inline-block;
+    margin-top: 4px;
+  }
+  .result-card.ok .result-code { background: rgba(58,170,104,0.15); color: var(--green-text); }
+  .result-card.ng .result-code { background: rgba(180,40,40,0.12); color: var(--red-text); }
+  .result-sub { font-size: 12px; margin-top: 8px; opacity: 0.75; }
+  .result-card.ok .result-sub { color: var(--green-text); }
+  .result-card.ng .result-sub { color: var(--red-text); }
+
+  /* 이력 */
+  .history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .clear-btn {
+    font-size: 12px;
+    color: var(--text-faint);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .history-list { list-style: none; }
+  .hi {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .hi:last-child { border-bottom: none; }
+  .badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+    flex-shrink: 0;
+    letter-spacing: 0.02em;
+  }
+  .badge.ok { background: var(--green-bg); color: var(--green-text); border: 1px solid var(--green-border); }
+  .badge.ng { background: var(--red-bg); color: var(--red-text); border: 1px solid var(--red-border); }
+  .h-code { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .h-time { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
+
+  canvas { display: none; }
+
+  footer {
+    text-align: center;
+    padding: 20px;
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+  </div>
+  <div>
+    <h1>시리얼 조회기</h1>
+    <p>QR → 시리얼 코드 검증</p>
+  </div>
+  <div class="status-pill" id="statusPill">파일 없음</div>
+</header>
+
+<main>
+
+  <!-- 1. 엑셀 업로드 -->
+  <div class="card">
+    <div class="card-label">1 — 엑셀 파일 업로드</div>
+    <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <div class="uz-title">파일을 클릭하거나 드래그</div>
+      <div class="uz-sub">.xlsx &nbsp;·&nbsp; .xls &nbsp;·&nbsp; .csv</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+    <div class="file-loaded" id="fileLoaded">
+      <div class="fl-dot"></div>
+      <span class="fl-name" id="flName"></span>
+      <span class="fl-count" id="flCount"></span>
+    </div>
+    <div class="col-row" id="colRow">
+      <label>시리얼코드 열(컬럼) 선택</label>
+      <select id="colSelect"></select>
+    </div>
+  </div>
+
+  <!-- 2. 스캔 / 입력 -->
+  <div class="card">
+    <div class="card-label">2 — QR 스캔 또는 직접 입력</div>
+
+    <div class="scan-tabs">
+      <button class="tab-btn active" id="tabCam" onclick="switchTab('cam')">
+        <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        카메라 스캔
+      </button>
+      <button class="tab-btn" id="tabText" onclick="switchTab('text')">
+        <svg viewBox="0 0 24 24"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+        직접 입력
+      </button>
+    </div>
+
+    <!-- 카메라 패널 -->
+    <div class="tab-panel active" id="panelCam">
+      <div id="cameraArea" style="display:none">
+        <div class="camera-wrap">
+          <video id="video" playsinline autoplay muted></video>
+          <div class="scan-overlay">
+            <div class="scan-frame">
+              <span></span>
+              <div class="scan-line"></div>
+            </div>
+          </div>
+        </div>
+        <p class="cam-hint">QR코드를 사각형 안에 맞춰주세요</p>
+        <button id="stopCamBtn" onclick="stopCamera()">카메라 끄기</button>
+      </div>
+      <button id="startCamBtn" onclick="startCamera()">
+        <svg viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        카메라 시작
+      </button>
+      <canvas id="qrCanvas"></canvas>
+    </div>
+
+    <!-- 직접 입력 패널 -->
+    <div class="tab-panel" id="panelText">
+      <div class="input-row">
+        <input type="text" id="manualInput" placeholder="시리얼코드 입력 후 Enter" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button onclick="checkManual()">조회</button>
+      </div>
+      <p style="font-size:12px;color:var(--text-faint);margin-top:8px;">바코드리더기로 스캔하면 자동 입력됩니다</p>
+    </div>
+  </div>
+
+  <!-- 결과 -->
+  <div class="result-card" id="resultCard">
+    <div class="result-icon" id="rIcon"></div>
+    <div class="result-status" id="rStatus"></div>
+    <div class="result-code" id="rCode"></div>
+    <div class="result-sub" id="rSub"></div>
+  </div>
+
+  <!-- 이력 -->
+  <div id="historySection" style="display:none">
+    <div class="card">
+      <div class="history-header">
+        <div class="card-label" style="margin-bottom:0">조회 이력</div>
+        <button class="clear-btn" onclick="clearHistory()">전체 삭제</button>
+      </div>
+      <ul class="history-list" id="historyList"></ul>
+    </div>
+  </div>
+
+</main>
+
+<footer>공장 시리얼 조회기 &nbsp;·&nbsp; 데이터는 기기 내에서만 처리됩니다</footer>
+
+<script>
+let serialSet = new Set();
+let history = [];
+let stream = null;
+let scanInterval = null;
+let lastCode = '';
+let lastCodeTime = 0;
+
+// ---- 파일 업로드 ----
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('drag'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'binary' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (!json.length) return alert('파일에 데이터가 없습니다.');
+
+      const headers = json[0].map(String);
+      const rows = json.slice(1).filter(r => r.some(c => String(c).trim()));
+
+      const sel = document.getElementById('colSelect');
+      sel.innerHTML = '';
+      headers.forEach((h, i) => {
+        const op = document.createElement('option');
+        op.value = i;
+        op.textContent = h || `열 ${i+1}`;
+        sel.appendChild(op);
+      });
+
+      const autoIdx = headers.findIndex(h => /serial|시리얼|s\/n|sn|코드|code|품번|barcode/i.test(h));
+      if (autoIdx >= 0) sel.value = autoIdx;
+
+      document.getElementById('colRow').classList.add('show');
+
+      sel.onchange = () => buildSet(rows, parseInt(sel.value));
+      buildSet(rows, parseInt(sel.value));
+
+      document.getElementById('flName').textContent = file.name;
+      document.getElementById('flCount').textContent = rows.length + '행';
+      document.getElementById('fileLoaded').classList.add('show');
+      dropzone.querySelector('.uz-title').textContent = '파일 교체: 클릭 또는 드래그';
+    } catch(err) { alert('파일 오류: ' + err.message); }
+  };
+  reader.readAsBinaryString(file);
+}
+
+function buildSet(rows, colIdx) {
+  serialSet = new Set(rows.map(r => String(r[colIdx] || '').trim()).filter(Boolean));
+  document.getElementById('flCount').textContent = rows.length + '행 · ' + serialSet.size + '개 코드';
+  const pill = document.getElementById('statusPill');
+  pill.textContent = serialSet.size + '개 로드됨';
+  pill.classList.add('ready');
+}
+
+// ---- 카메라 QR 스캔 ----
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } });
+    const video = document.getElementById('video');
+    video.srcObject = stream;
+    await video.play();
+
+    document.getElementById('cameraArea').style.display = 'block';
+    document.getElementById('startCamBtn').style.display = 'none';
+    document.getElementById('stopCamBtn').style.display = 'block';
+
+    const canvas = document.getElementById('qrCanvas');
+    const ctx = canvas.getContext('2d');
+
+    scanInterval = setInterval(() => {
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+      if (code) {
+        const now = Date.now();
+        if (code.data !== lastCode || now - lastCodeTime > 3000) {
+          lastCode = code.data;
+          lastCodeTime = now;
+          checkCode(code.data.trim());
+        }
+      }
+    }, 200);
+  } catch(err) {
+    alert('카메라 권한을 허용해주세요.\n' + err.message);
+  }
+}
+
+function stopCamera() {
+  clearInterval(scanInterval);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  document.getElementById('cameraArea').style.display = 'none';
+  document.getElementById('startCamBtn').style.display = 'flex';
+  document.getElementById('stopCamBtn').style.display = 'none';
+}
+
+// ---- 탭 전환 ----
+function switchTab(tab) {
+  document.getElementById('tabCam').classList.toggle('active', tab === 'cam');
+  document.getElementById('tabText').classList.toggle('active', tab === 'text');
+  document.getElementById('panelCam').classList.toggle('active', tab === 'cam');
+  document.getElementById('panelText').classList.toggle('active', tab === 'text');
+  if (tab !== 'cam') stopCamera();
+  if (tab === 'text') setTimeout(() => document.getElementById('manualInput').focus(), 50);
+}
+
+// ---- 수동 입력 ----
+document.getElementById('manualInput').addEventListener('keydown', e => { if (e.key === 'Enter') checkManual(); });
+function checkManual() {
+  const val = document.getElementById('manualInput').value.trim();
+  if (!val) return;
+  checkCode(val);
+  document.getElementById('manualInput').value = '';
+}
+
+// ---- 조회 로직 ----
+function checkCode(code) {
+  if (!serialSet.size) {
+    showResult('warn', '⚠', '파일 없음', code, '엑셀 파일을 먼저 업로드해주세요');
+    return;
+  }
+  const found = serialSet.has(code);
+  const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  if (found) {
+    showResult('ok', '✓', '확인됨', code, '등록된 시리얼코드입니다');
+    vibrate([100, 50, 100]);
+  } else {
+    showResult('ng', '✗', '없음', code, '미등록 코드입니다');
+    vibrate([300]);
+  }
+  addHistory(code, found, now);
+}
+
+function showResult(type, icon, status, code, sub) {
+  const card = document.getElementById('resultCard');
+  card.className = 'result-card show ' + type;
+  document.getElementById('rIcon').textContent = icon;
+  document.getElementById('rStatus').textContent = status;
+  document.getElementById('rCode').textContent = code;
+  document.getElementById('rSub').textContent = sub;
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function vibrate(pattern) {
+  if (navigator.vibrate) navigator.vibrate(pattern);
+}
+
+// ---- 이력 ----
+function addHistory(code, found, time) {
+  history.unshift({ code, found, time });
+  if (history.length > 100) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  document.getElementById('historySection').style.display = history.length ? 'block' : 'none';
+  document.getElementById('historyList').innerHTML = history.map(h => `
+    <li class="hi">
+      <span class="badge ${h.found ? 'ok' : 'ng'}">${h.found ? '확인' : '없음'}</span>
+      <span class="h-code">${h.code}</span>
+      <span class="h-time">${h.time}</span>
+    </li>
+  `).join('');
+}
+
+function clearHistory() {
+  history = [];
+  renderHistory();
+  document.getElementById('resultCard').className = 'result-card';
+}
+</script>
+</body>
+</html>
